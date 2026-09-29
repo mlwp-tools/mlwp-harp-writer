@@ -97,7 +97,22 @@ def test_readme_workflow(tmp_path):
         loader="mlwp_data_loaders.loaders.harp.obstable",
     )
 
-    ds_fcst_points = ds_fcst.mx.align_space_with(ds_obs, method="delaunay")
+    # CF metadata for the HARP parameter mapping, not (yet) set by the loaders
+    ds_fcst["2t"].attrs.update(standard_name="air_temperature", units="K")
+    ds_fcst = ds_fcst.assign_coords(
+        height=((), 2.0, {"standard_name": "height", "units": "m"})
+    )
+    ds_obs["T2m"].attrs.update(standard_name="air_temperature", units="K")
+    ds_obs = ds_obs.assign_coords(
+        height=((), 2.0, {"standard_name": "height", "units": "m"})
+    )
+
+    # regular lat/lon grid on grid_index -> latitude/longitude dims, for the
+    # xarray interpolator
+    ds_fcst = ds_fcst.set_index(grid_index=["latitude", "longitude"]).unstack(
+        "grid_index"
+    )
+    ds_fcst_points = ds_fcst.mx.align_space_with(ds_obs, method="xarray")
     ds_fcst_aligned = mx.align_time(ds_fcst_points, reference=ds_obs)
     write_harp_parquets(
         ds_fcst_aligned, ds_obs, tmp_path / "harp", fcst_model="my-ai-model"

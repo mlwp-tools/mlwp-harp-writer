@@ -28,7 +28,7 @@ from mlwp_data_specs.api import TIME_TRAIT_ATTR
 from ._arrow import date_partitions, write_hive_dataset
 from ._stations import station_elevation, station_ids
 from ._time import to_unix_seconds
-from .params import HarpParam, resolve_params
+from .params import HarpParam, harp_variables
 from .traits import require_traits
 
 PARTITIONING = ["valid_year", "valid_month", "valid_day"]
@@ -53,13 +53,16 @@ def write_obsparquet(
         ``(valid_time, point_index)`` with the ``observation`` time trait, or
         as returned by ``mxalign.align_time`` with an observation reference:
         on ``(reference_time, lead_time, point_index)`` with a 2-D
-        ``valid_time`` coordinate and the ``forecast`` time trait.
+        ``valid_time`` coordinate and the ``forecast`` time trait. Variables
+        are mapped to HARP parameters by CF ``standard_name`` and height
+        coordinate, and converted to HARP units, see
+        :func:`~mlwp_harp_writer.params.harp_variables`.
     path : str or PathLike
         Root of the obsparquet dataset (the ``obs_path`` passed to
         ``read_point_obs``).
     params : dict, optional
-        Variable name to HARP parameter overrides, see
-        :func:`~mlwp_harp_writer.params.resolve_params`.
+        Explicit variable name to HARP parameter mappings, see
+        :func:`~mlwp_harp_writer.params.harp_variables`.
 
     Returns
     -------
@@ -73,11 +76,11 @@ def write_obsparquet(
         to a HARP parameter.
     """
     ds_obs = obs_on_valid_time(ds_obs)
-    params_resolved = resolve_params(ds_obs, params)
-    if not params_resolved:
+    obs_params = harp_variables(ds_obs, params)
+    if not obs_params:
         raise ValueError("No observation variables could be mapped to HARP parameters")
 
-    df = observation_dataframe(ds_obs, params_resolved)
+    df = observation_dataframe(ds_obs, obs_params)
     if df.empty:
         logger.warning("No non-missing observations to write")
         return []
@@ -85,7 +88,10 @@ def write_obsparquet(
     path = Path(path)
     table = pa.Table.from_pandas(df, preserve_index=False)
     _write_schema(table.schema, path / "schema" / f"{_TABLE_NAME}-schema.parquet")
-    _write_params_table(params_resolved.values(), path / "params" / "params.parquet")
+    _write_params_table(
+        [HarpParam(name, da.attrs["units"]) for name, da in obs_params.items()],
+        path / "params" / "params.parquet",
+    )
 
     first = pd.Timestamp(int(df["valid_dttm"].min()), unit="s")
     last = pd.Timestamp(int(df["valid_dttm"].max()), unit="s")
@@ -157,16 +163,18 @@ def obs_on_valid_time(ds_obs: xr.Dataset) -> xr.Dataset:
 
 
 def observation_dataframe(
-    ds_obs: xr.Dataset, params: dict[str, HarpParam]
+    ds_obs: xr.Dataset, obs_params: dict[str, xr.DataArray]
 ) -> pd.DataFrame:
     """Convert observations to a wide HARP obsparquet table.
 
     Parameters
     ----------
     ds_obs : xr.Dataset
-        Point observations with dims ``(valid_time, point_index)``.
-    params : dict[str, HarpParam]
-        Variables to write and their HARP parameters.
+        Point observations with dims ``(valid_time, point_index)``, providing
+        the valid times and station metadata.
+    obs_params : dict[str, xr.DataArray]
+        Observations to write keyed by HARP parameter name, in HARP units, as
+        returned by :func:`~mlwp_harp_writer.params.harp_variables`.
 
     Returns
     -------
@@ -196,16 +204,16 @@ def observation_dataframe(
     if elevation is not None:
         columns["elev"] = elevation[point_idx]
 
-    for var, harp_param in params.items():
-        da_obs = ds_obs[var]
+    for harp_name, da_obs in obs_params.items():
         if set(da_obs.dims) != set(_OBS_DIMS):
             raise NotImplementedError(
-                f"Variable '{var}' has dims {da_obs.dims}; only {_OBS_DIMS} is supported"
+                f"Variable '{da_obs.name}' has dims {da_obs.dims}; only "
+                f"{_OBS_DIMS} is supported"
             )
-        columns[harp_param.name] = da_obs.transpose(*_OBS_DIMS).values.ravel()
+        columns[harp_name] = da_obs.transpose(*_OBS_DIMS).values.ravel()
 
     df = pd.DataFrame(columns)
-    param_cols = [p.name for p in params.values()]
+    param_cols = list(obs_params)
     df = df[df[param_cols].notna().any(axis=1)].reset_index(drop=True)
 
     partitions = date_partitions(pd.to_datetime(df["valid_dttm"], unit="s"), "valid")

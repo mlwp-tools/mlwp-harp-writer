@@ -1,4 +1,4 @@
-"""Tests for trait handling, parameter mapping and time conversions."""
+"""Tests for trait handling, station metadata and time conversions."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import pytest
 import xarray as xr
 from mlwp_data_specs.api import TIME_TRAIT_ATTR
 
-from mlwp_harp_writer import DEFAULT_PARAMS, HarpParam, resolve_params, validate
+from mlwp_harp_writer import validate
 from mlwp_harp_writer._stations import station_elevation, station_ids
 from mlwp_harp_writer._time import lead_time_seconds, to_unix_seconds
 from mlwp_harp_writer.traits import get_traits, require_traits
@@ -41,22 +41,6 @@ def test_require_traits(ds_obs):
             context="test",
             time="observation",
         )
-
-
-def test_resolve_params_defaults_overrides_and_harp_names(ds_obs):
-    """Variables map via defaults, overrides and existing HARP names."""
-    ds_vars = ds_obs.assign(
-        T2m=ds_obs["2t"], foo=ds_obs["2t"], bar=ds_obs["2t"]
-    ).drop_vars("2t")
-    resolved = resolve_params(ds_vars, {"bar": HarpParam("Q2m", "kg/kg")})
-    assert resolved == {"T2m": HarpParam("T2m", "K"), "bar": HarpParam("Q2m", "K")}
-    assert DEFAULT_PARAMS["2t"].name == "T2m"
-
-
-def test_resolve_params_duplicate_harp_names(ds_obs):
-    """Two variables mapping to one HARP parameter is an error."""
-    with pytest.raises(ValueError, match="same HARP parameter"):
-        resolve_params(ds_obs.assign(t2m=ds_obs["2t"]))
 
 
 @pytest.mark.parametrize(

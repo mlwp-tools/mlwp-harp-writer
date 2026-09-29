@@ -11,7 +11,10 @@ Guidance for agents and contributors working in this repository.
   alignment**. Users load data with `mlwp-data-loaders` and align it by
   calling mxalign directly.
   - For a single forecast, the README uses the `ds.mx` accessor
-    (`ds_fcst.mx.align_space_with(ds_obs)`) for space. It uses the
+    (`ds_fcst.mx.align_space_with(ds_obs, method="xarray")`) for space. It
+    uses xarray rather than delaunay, because delaunay drops variable
+    metadata; see
+    `docs/upstream-issues/mxalign-delaunay-drops-variable-metadata.md`. It uses the
     module-level `mx.align_time(ds, reference=ds_obs)` for time, because the
     accessor's `align_time_with` drops `reference_time`/`lead_time`; this
     should be fixed upstream. It then calls
@@ -20,12 +23,27 @@ Guidance for agents and contributors working in this repository.
     `mx.align_time` to `write_harp_parquets`.
   - README examples import names directly, e.g.
     `from mlwp_harp_writer import write_harp_parquets`, with no module alias.
+  - README examples start from loader output and never construct new
+    xarray objects (`xr.Dataset`/`xr.DataArray`) afterwards.
+    - Metadata that belongs in the loader is flagged as such, with a link to
+      the upstream note.
+    - Whatever the loader doesn't set yet is added inline on the loaded
+      datasets, e.g. `.attrs.update(...)` or
+      `assign_coords(height=((), 2.0, {...}))`.
   - Workarounds for mxalign behaviour belong upstream in mxalign, not here.
 - Don't use `ds_fcst.mx.align_time_with(ds_obs)` before writing. It collapses
   the forecast onto `valid_time` and drops `reference_time`/`lead_time`; see
   `docs/upstream-issues/mxalign-align-time-with-keep-lead-time.md`.
-- It does **not** convert units or compute derived variables. That belongs
-  upstream (mxalign transformations).
+- **Variables are mapped to HARP parameters by CF `standard_name`**, plus a
+  `height` coordinate for level-dependent names (`CF_TO_HARP` in
+  `params.py`). Values are converted to HARP's units (`param_units` in
+  harpIO's `harp_params.R`).
+  - Never map by variable name or assume a height. Require the metadata, and
+    raise with an example of how to add it.
+  - mlwp-data-loaders doesn't set variable metadata yet; see
+    `docs/upstream-issues/mlwp-data-loaders-variable-standard-names.md`.
+- It does **not** compute derived variables (e.g. wind speed from u/v). That
+  belongs upstream (mxalign transformations).
 
 ## Coding conventions
 
@@ -70,7 +88,8 @@ Guidance for agents and contributors working in this repository.
   - `_stations.py`: SID, elevation, and copying station metadata from the obs
   - `_time.py`: unix seconds and lead time conversions
 - Reading and checking mlwp-data-specs traits: `src/mlwp_harp_writer/traits.py`
-- Variable -> HARP parameter table: `src/mlwp_harp_writer/params.py`
+- CF `standard_name`/height -> HARP parameter table, height detection and
+  unit conversion: `src/mlwp_harp_writer/params.py` (`harp_variables`)
 - Synthetic test data: `tests/conftest.py`
 - Known upstream bugs (cause, reproduction, proposed fix, which tests are
   `xfail`ed): `docs/upstream-issues/`. Add a file there whenever a test is
@@ -97,6 +116,11 @@ Guidance for agents and contributors working in this repository.
   obsparquet.
 - **The writers accept numeric or `timedelta64` lead times.** mxalign itself
   needs `timedelta64`.
+- **Scalar coordinates belong to the whole Dataset in xarray.** A scalar
+  `height` applies to every variable. For variables at different heights,
+  use a size-1 height dimension per variable (`height_2m`, `height_10m`).
+  `_squeeze_height` prefers a variable's own height dim over a Dataset-level
+  scalar one.
 - **The harpIO layout is fixed by harpIO's readers**
   (`harpIO/R/parquet.R`). Check against them before changing:
   - partition names and their int32 type

@@ -69,12 +69,10 @@ def run_r(script: str) -> str:
 
 @requires_harp
 @pytest.mark.parametrize("ensemble", [False, True])
-def test_harp_reads_and_verifies(
-    tmp_path, ds_grid_fcst_stacked, ds_grid_ens_stacked, ds_obs, ensemble
-):
+def test_harp_reads_and_verifies(tmp_path, ds_grid_fcst, ds_grid_ens, ds_obs, ensemble):
     """harpIO reads the forecasts and obs, and harpPoint can verify them."""
-    ds_fcst = ds_grid_ens_stacked if ensemble else ds_grid_fcst_stacked
-    aligned = align_with_mxalign({"model": ds_fcst}, ds_obs, "delaunay")
+    ds_fcst = ds_grid_ens if ensemble else ds_grid_fcst
+    aligned = align_with_mxalign({"model": ds_fcst}, ds_obs, "xarray")
     write_harp_parquets(aligned, ds_obs, tmp_path)
     verify = "ens_verify" if ensemble else "det_verify"
     out = run_r(

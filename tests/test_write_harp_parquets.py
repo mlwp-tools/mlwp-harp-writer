@@ -13,6 +13,7 @@ from mlwp_harp_writer.obsparquet import obs_on_valid_time
 
 from .conftest import (
     LEAD_HOURS,
+    MXALIGN_DELAUNAY_METADATA_BUG,
     MXALIGN_OVERLAP_BUG,
     REFERENCE_TIMES,
     STATION_CODES,
@@ -74,7 +75,15 @@ def select_leads(ds_fcst: xr.Dataset, lead_hours: list[int]) -> xr.Dataset:
 
 @pytest.mark.parametrize(
     ("fixture", "method"),
-    [("ds_grid_fcst_stacked", "delaunay"), ("ds_grid_fcst", "xarray")],
+    [
+        pytest.param("ds_grid_fcst", "xarray", id="xarray"),
+        pytest.param(
+            "ds_grid_fcst_stacked",
+            "delaunay",
+            marks=MXALIGN_DELAUNAY_METADATA_BUG,
+            id="delaunay",
+        ),
+    ],
 )
 def test_mxalign_to_harp(tmp_path, request, ds_obs, fixture, method):
     """mxalign output is written with model names from the dict keys and SIDs
@@ -114,11 +123,12 @@ def test_mxalign_to_harp(tmp_path, request, ds_obs, fixture, method):
     assert set(df_obs["SID"]) == set(STATION_CODES)
 
 
-def test_single_forecast_via_mx_accessor(tmp_path, ds_grid_fcst_stacked, ds_obs):
-    """A single forecast aligned with the ``ds.mx`` accessor is written under
-    the name given as ``fcst_model``, as in the README."""
-    ds_fcst_points = ds_grid_fcst_stacked.mx.align_space_with(ds_obs, method="delaunay")
-    write_harp_parquets(ds_fcst_points, ds_obs, tmp_path, fcst_model="my-ai-model")
+def test_single_forecast_via_mx_accessor(tmp_path, ds_grid_fcst, ds_obs):
+    """A single forecast aligned as in the README (``ds.mx`` accessor for
+    space, ``mx.align_time`` for time) is written under ``fcst_model``."""
+    ds_fcst_points = ds_grid_fcst.mx.align_space_with(ds_obs, method="xarray")
+    ds_fcst_aligned = mx.align_time(ds_fcst_points, reference=ds_obs)
+    write_harp_parquets(ds_fcst_aligned, ds_obs, tmp_path, fcst_model="my-ai-model")
 
     df_fcst = read_hive(
         tmp_path / "FCPARQUET" / "my-ai-model" / "T2m", FC_PARTITIONS
@@ -136,9 +146,9 @@ def test_write_harp_fcst_model_argument(tmp_path, ds_point_fcst, ds_obs):
         write_harp_parquets({"a": ds_point_fcst}, ds_obs, tmp_path, fcst_model="b")
 
 
-def test_mxalign_ensemble(tmp_path, ds_grid_ens_stacked, ds_obs):
+def test_mxalign_ensemble(tmp_path, ds_grid_ens, ds_obs):
     """Ensemble forecasts aligned by mxalign get one column per member."""
-    aligned = align_with_mxalign({"ens": ds_grid_ens_stacked}, ds_obs, "delaunay")
+    aligned = align_with_mxalign({"ens": ds_grid_ens}, ds_obs, "xarray")
     write_harp_parquets(aligned, ds_obs, tmp_path)
     df_fcst = read_hive(tmp_path / "FCPARQUET" / "ens" / "T2m", FC_PARTITIONS)
     assert [c for c in df_fcst.column_names if "_mbr" in c] == [
@@ -155,14 +165,14 @@ def test_mxalign_ensemble(tmp_path, ds_grid_ens_stacked, ds_obs):
         pytest.param([0, 6, 12], marks=MXALIGN_OVERLAP_BUG, id="overlap"),
     ],
 )
-def test_obs_in_align_time_dict(tmp_path, ds_grid_fcst_stacked, ds_obs, lead_hours):
+def test_obs_in_align_time_dict(tmp_path, ds_grid_fcst, ds_obs, lead_hours):
     """Obs passed through ``mx.align_time`` in the datasets dict come back
     reshaped to ``(reference_time, lead_time)``; they write the same rows as
     the original obs at the forecast valid times."""
     forecasts: dict[str, xr.Dataset] = mx.align_space(
-        {"model": select_leads(ds_grid_fcst_stacked, lead_hours)},
+        {"model": select_leads(ds_grid_fcst, lead_hours)},
         reference=ds_obs,
-        method="delaunay",
+        method="xarray",
     )
     aligned: dict[str, xr.Dataset] = mx.align_time(
         {**forecasts, "obs": ds_obs}, reference="obs"

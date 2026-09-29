@@ -27,7 +27,7 @@ from loguru import logger
 from ._arrow import date_partitions, write_hive_dataset
 from ._stations import station_ids, with_station_coords
 from ._time import lead_time_seconds, to_unix_seconds
-from .params import HarpParam, resolve_params
+from .params import HarpParam, harp_variables
 from .traits import require_traits
 
 PARTITIONING = ["fcst_hour", "fcst_year", "fcst_month", "fcst_day"]
@@ -51,15 +51,18 @@ def write_fcparquet(
         Point forecast with dims ``(reference_time, lead_time, point_index)``
         and, for ensembles, ``member``, e.g. as returned by
         ``mxalign.align_space``/``mxalign.align_time``. Needs the ``forecast``
-        time and ``point`` space traits.
+        time and ``point`` space traits. Variables are mapped to HARP
+        parameters by CF ``standard_name`` and height coordinate, and
+        converted to HARP units, see
+        :func:`~mlwp_harp_writer.params.harp_variables`.
     path : str or PathLike
         Root of the fcparquet dataset (the ``file_path`` passed to
         ``read_point_forecast``).
     fcst_model : str
         HARP model name, used in the directory layout and member column names.
     params : dict, optional
-        Variable name to HARP parameter overrides, see
-        :func:`~mlwp_harp_writer.params.resolve_params`.
+        Explicit variable name to HARP parameter mappings, see
+        :func:`~mlwp_harp_writer.params.harp_variables`.
     model_elevation : str, optional
         Name of a variable or coordinate along ``point_index`` holding the
         model orography at the stations, written as ``model_elevation``.
@@ -98,19 +101,18 @@ def write_fcparquet(
         elevation = ds_fcst[model_elevation].values
         if model_elevation in ds_fcst.data_vars:
             ds_values = ds_fcst.drop_vars(model_elevation)
-    params_resolved = resolve_params(ds_values, params)
-
     written = []
-    for var, harp_param in params_resolved.items():
+    for harp_name, da_param in harp_variables(ds_values, params).items():
+        harp_param = HarpParam(harp_name, da_param.attrs["units"])
         df = forecast_dataframe(
-            ds_fcst[var],
+            da_param,
             fcst_model=fcst_model,
             harp_param=harp_param,
             is_ensemble=is_ensemble,
             model_elevation=elevation,
         )
         if df.empty:
-            logger.warning(f"No non-missing forecasts for '{var}', skipping")
+            logger.warning(f"No non-missing forecasts for {harp_name}, skipping")
             continue
         table = pa.Table.from_pandas(df, preserve_index=False)
         first = pd.Timestamp(int(df["fcst_dttm"].min()), unit="s")

@@ -59,7 +59,35 @@ ds_obs = load_and_validate_dataset(
 )
 ```
 
-### 2. Align with mxalign
+### 2. Prepare variable metadata
+
+Variables are mapped to HARP parameters by their CF `standard_name`, and
+values are converted from their `units` (see
+[Parameter names and units](#parameter-names-and-units)). Level-dependent
+quantities such as 2 m temperature or 10 m wind also need a **height
+coordinate** with units.
+
+Setting this metadata is the loader's job: a loader knows what its variables
+are. mlwp-data-loaders doesn't do it for data variables yet, and
+[this note](docs/upstream-issues/mlwp-data-loaders-variable-standard-names.md)
+proposes it. Until then, add what the loader leaves out to the loaded datasets
+**before aligning**, so it travels through mxalign:
+
+```python
+ds_fcst["2t"].attrs.update(standard_name="air_temperature", units="K")
+ds_fcst = ds_fcst.assign_coords(
+    height=((), 2.0, {"standard_name": "height", "units": "m"})
+)
+```
+
+Do the same for the observations, e.g. for `T2m` in `ds_obs`.
+
+The scalar `height` coordinate, given as a `(dims, value, attrs)` tuple,
+applies to every variable in the Dataset. For variables at different heights
+(e.g. 2 m temperature and 10 m wind), give each variable its own size-1
+height dimension instead, e.g. `height_2m` and `height_10m`.
+
+### 3. Align with mxalign
 
 Importing mxalign registers the `ds.mx` accessor on every `xr.Dataset`:
 
@@ -67,9 +95,7 @@ Importing mxalign registers the `ds.mx` accessor on every `xr.Dataset`:
 import mxalign as mx
 
 # grid -> observation stations
-ds_fcst_points = ds_fcst.mx.align_space_with(
-    ds_obs, method="delaunay"  # or "xarray" for lat/lon (or projected xc/yc) grids
-)
+ds_fcst_points = ds_fcst.mx.align_space_with(ds_obs, method="xarray")
 
 # keep the forecast cycles within the observation period. This can't use the
 # accessor yet: ds_fcst_points.mx.align_time_with(ds_obs) drops
@@ -87,15 +113,41 @@ ds_fcst_aligned = mx.align_time(ds_fcst_points, reference=ds_obs)
   - Until then, use the module-level `mx.align_time` with the observations
     as `reference`. With a single Dataset it returns a single Dataset and
     keeps `reference_time`/`lead_time`.
+- **Use `method="xarray"`.**
+  - mxalign's `method="delaunay"` currently drops the variables'
+    `standard_name`/`units` and scalar coordinates such as `height`, so
+    nothing can be mapped to HARP parameters afterwards.
+  - This should be fixed upstream in mxalign; see
+    [this note](docs/upstream-issues/mxalign-delaunay-drops-variable-metadata.md).
+- **The xarray method needs `latitude`/`longitude` dimensions**, or projected
+  `xc`/`yc` with a CRS: see `ds.mx.add_crs`/`ds.mx.add_grid_mapping` and
+  `ds.mx.unstack`.
+  - The anemoi loaders return grids on a flattened `grid_index`. For a
+    regular lat/lon grid, unstack it first:
+
+    ```python
+    ds_fcst = ds_fcst.set_index(grid_index=["latitude", "longitude"]).unstack(
+        "grid_index"
+    )
+    ```
+- **Time alignment can't use the accessor yet.**
+  - `ds_fcst.mx.align_time_with(ds_obs)` collapses the forecast onto the
+    observations' `valid_time`. It keeps one lead time per valid time and
+    drops `reference_time` (analysis time) and `lead_time`, which HARP needs.
+  - This should be fixed upstream in mxalign, e.g. with an option to keep
+    the forecast structure; see
+    [this note](docs/upstream-issues/mxalign-align-time-with-keep-lead-time.md).
+  - Until then, use the module-level `mx.align_time` with the observations
+    as `reference`. With a single Dataset it returns a single Dataset and
+    keeps `reference_time`/`lead_time`.
 - The time step is optional for HARP, which matches forecasts with
   observations by valid time when it reads them.
-- mxalign requires `lead_time` to be `timedelta64`, and the delaunay method
-  requires a `grid_index` dimension. The anemoi loaders in mlwp-data-loaders
-  provide both.
+- mxalign requires `lead_time` to be `timedelta64`. The anemoi loaders in
+  mlwp-data-loaders provide that.
 - For several forecasts, pass a dict to `mx.align_space`/`mx.align_time`
   instead; see [Several forecasts](#several-forecasts).
 
-### 3. Write HARP parquet
+### 4. Write HARP parquet
 
 ```python
 from mlwp_harp_writer import write_harp_parquets
@@ -133,7 +185,7 @@ import mxalign as mx
 import xarray as xr
 
 forecasts: dict[str, xr.Dataset] = mx.align_space(
-    {"my-ai-model": ds_fcst, "nwp": ds_nwp}, reference=ds_obs, method="delaunay"
+    {"my-ai-model": ds_fcst, "nwp": ds_nwp}, reference=ds_obs, method="xarray"
 )
 # common (reference_time, lead_time) grid within the observation period
 aligned: dict[str, xr.Dataset] = mx.align_time(forecasts, reference=ds_obs)
@@ -149,7 +201,7 @@ write_harp_parquets(aligned, ds_obs, "harp_data/")
   Currently this fails when cycles overlap in valid time; see
   [Limitations](#limitations).
 
-### 4. Verify in R with harp
+### 5. Verify in R with harp
 
 This needs a harpIO version with parquet support (current `master`):
 
@@ -191,31 +243,52 @@ write_obsparquet(ds_obs, "harp_data/OBSPARQUET")
 
 ## Parameter names and units
 
-Variables are mapped to HARP parameter names with
-`mlwp_harp_writer.DEFAULT_PARAMS`:
+Variables are mapped to HARP parameters by their CF `standard_name` and, for
+near-surface quantities, the height of their `height` coordinate
+(`mlwp_harp_writer.CF_TO_HARP`). Values are converted to the units HARP uses
+for each parameter:
 
-| Variable names | HARP parameter |
-|---|---|
-| `2t`, `t2m`, `T2m` | `T2m` |
-| `2d`, `d2m`, `Td2m` | `Td2m` |
-| `10si`, `ws10m`, `S10m` | `S10m` |
-| `10fg`, `G10m` | `G10m` |
-| `msl`, `Pmsl` | `Pmsl` |
-| `2r`, `RH2m` | `RH2m` |
-| `tcc`, `CCtot` | `CCtot` |
+| `standard_name` | height | HARP parameter | HARP units |
+|---|---|---|---|
+| `air_temperature` | 2 m | `T2m` | K |
+| `dew_point_temperature` | 2 m | `Td2m` | K |
+| `relative_humidity` | 2 m | `RH2m` | percent |
+| `specific_humidity` | 2 m | `Q2m` | kg/kg |
+| `wind_speed` | 10 m | `S10m` | m/s |
+| `wind_from_direction` | 10 m | `D10m` | degrees |
+| `wind_speed_of_gust` | 10 m | `G10m` | m/s |
+| `air_pressure_at_mean_sea_level` | – | `Pmsl` | hPa |
+| `surface_air_pressure` | – | `Ps` | hPa |
+| `cloud_area_fraction` | – | `CCtot` | oktas |
+| `visibility_in_air` | – | `vis` | m |
 
-- Variables with no mapping are skipped with a warning.
-- Pass `params={"my_var": "HarpName"}` (or a
-  `mlwp_harp_writer.HarpParam(name, units)`) to the `write_*` functions to add
-  or override mappings.
-- Units come from each variable's `units` attribute. Values are written
-  as-is, with no unit conversion. Because forecasts and observations go
-  through the same mapping, they stay consistent.
-- If you convert units with mxalign transformations such as
-  `mx.transform("kelvin_to_celcius", ...)`, set the `units` attribute
-  yourself afterwards (e.g. `ds_fcst["2t"].attrs["units"] = "degC"`).
-  These transformations don't update it, so the old `K` label would be
-  written alongside Celsius values.
+- **Height:**
+  - Standard names with a height in the table need a height coordinate:
+    either a scalar coord or a size-1 dimension (see
+    [step 2](#2-prepare-variable-metadata)), with `standard_name="height"`
+    or named `height`, and units `m` or `km`.
+  - A missing height, a height coordinate without units, or several height
+    coordinates on one variable raise `ValueError`, with an example of how
+    to add one.
+  - A height with no HARP parameter (e.g. 100 m wind) is skipped with a
+    warning.
+- **Units:**
+  - Values are converted from each variable's `units` attribute, e.g. Pa → hPa,
+    degC → K, a cloud fraction `1` → oktas, a relative humidity `1` →
+    percent.
+  - Missing or unsupported units raise `ValueError`.
+  - Conversions work on the `units` attribute. After an mxalign
+    transformation such as `mx.transform("kelvin_to_celcius", ...)`, set
+    `units` yourself (e.g. `ds_fcst["2t"].attrs["units"] = "degC"`), since the
+    transformation doesn't update it.
+- **Variables without a `standard_name`** are skipped with a warning.
+- **Explicit mappings:** map variables explicitly with `params=`, e.g.
+  `params={"T2m": "T2m"}` or `params={"my_var": HarpParam("Foo", "")}`, on
+  the `write_*` functions.
+  - HARP names from the table are converted to that parameter's units.
+  - Other names are written with the variable's own `units`.
+- **Not supported:** pressure-level and multi-height variables raise
+  `NotImplementedError`.
 
 ## Output format details
 
@@ -242,7 +315,13 @@ Observations (`obsparquet`) form one wide table:
 
 - Only single-level (surface) parameters are supported; variables with a
   vertical dimension raise `NotImplementedError`.
-- Precipitation accumulations (`AccPcp*h`) are not mapped by default.
+- Precipitation accumulations (`AccPcp*h`, CF `precipitation_amount` with
+  `cell_methods`) are not mapped.
+- **Known mxalign issue:** `method="delaunay"` drops the variables'
+  `standard_name`/`units` and scalar coordinates, so use `method="xarray"`.
+  See
+  [the write-up](docs/upstream-issues/mxalign-delaunay-drops-variable-metadata.md)
+  for the cause and a proposed fix. The affected test here is marked `xfail`.
 - Point forecasts must be at the observation stations. mxalign does not do
   point-to-point matching yet.
 - Quantile forecasts are not supported.

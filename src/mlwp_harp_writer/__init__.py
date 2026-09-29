@@ -10,7 +10,7 @@ import xarray as xr
 
 from .fcparquet import write_fcparquet
 from .obsparquet import write_obsparquet
-from .params import DEFAULT_PARAMS, HarpParam, resolve_params
+from .params import CF_TO_HARP, HarpParam, harp_variables
 from .traits import validate
 
 try:
@@ -51,7 +51,9 @@ def write_harp_parquets(
         HARP model name of ``forecasts`` when it is a single Dataset.
         Required in that case, and not allowed with a dict.
     params : dict, optional
-        Variable name to HARP parameter overrides, see :func:`resolve_params`.
+        Explicit variable name to HARP parameter mappings, see
+        :func:`harp_variables`. By default variables are mapped by CF
+        ``standard_name`` and height coordinate.
 
     Returns
     -------
@@ -88,9 +90,9 @@ def write_harp_parquets(
 
 
 __all__ = [
-    "DEFAULT_PARAMS",
+    "CF_TO_HARP",
     "HarpParam",
-    "resolve_params",
+    "harp_variables",
     "validate",
     "write_fcparquet",
     "write_harp_parquets",

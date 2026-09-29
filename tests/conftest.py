@@ -39,6 +39,19 @@ MXALIGN_OVERLAP_BUG = pytest.mark.xfail(
     ),
 )
 
+# mxalign `refactor/alignment` (81482db): the delaunay interpolator rebuilds
+# each variable from a blank map_blocks template, dropping the variable attrs
+# (standard_name, units) and non-dimension coords (e.g. a scalar height), so
+# the CF-based HARP mapping skips or rejects the variables afterwards.
+# See docs/upstream-issues/mxalign-delaunay-drops-variable-metadata.md
+MXALIGN_DELAUNAY_METADATA_BUG = pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "mxalign refactor/alignment: delaunay interpolation drops variable "
+        "attrs (standard_name/units) and scalar coords"
+    ),
+)
+
 
 def linear_field(lat, lon, ref_idx, lead_h, member=0):
     """Return a temperature field that is linear in space.
@@ -81,6 +94,28 @@ def _set_latlon_attrs(ds_in: xr.Dataset) -> xr.Dataset:
     ds_in["latitude"].attrs.update(standard_name="latitude", units="degrees_north")
     ds_in["longitude"].attrs.update(standard_name="longitude", units="degrees_east")
     return ds_in
+
+
+def add_t2m_metadata(ds_in: xr.Dataset) -> xr.Dataset:
+    """Describe ``2t`` as 2 m air temperature with CF metadata.
+
+    Sets the ``standard_name``/``units`` attributes and adds a scalar ``height``
+    coordinate, which is what the HARP parameter mapping needs.
+
+    Parameters
+    ----------
+    ds_in : xr.Dataset
+        Dataset with a ``2t`` variable in K.
+
+    Returns
+    -------
+    xr.Dataset
+        The dataset with the metadata added.
+    """
+    ds_in["2t"].attrs.update(standard_name="air_temperature", units="K")
+    return ds_in.assign_coords(
+        height=xr.DataArray(2.0, attrs={"standard_name": "height", "units": "m"})
+    )
 
 
 def make_grid_forecast(ensemble: bool = False, stacked: bool = False) -> xr.Dataset:
@@ -145,7 +180,7 @@ def make_grid_forecast(ensemble: bool = False, stacked: bool = False) -> xr.Data
     ds_fcst.attrs[UNCERTAINTY_TRAIT_ATTR] = (
         Uncertainty.ENSEMBLE if ensemble else Uncertainty.DETERMINISTIC
     )
-    return ds_fcst
+    return add_t2m_metadata(ds_fcst)
 
 
 def make_point_forecast(ensemble: bool = False) -> xr.Dataset:
@@ -192,7 +227,7 @@ def make_point_forecast(ensemble: bool = False) -> xr.Dataset:
     ds_fcst.attrs[UNCERTAINTY_TRAIT_ATTR] = (
         Uncertainty.ENSEMBLE if ensemble else Uncertainty.DETERMINISTIC
     )
-    return ds_fcst
+    return add_t2m_metadata(ds_fcst)
 
 
 def make_observations(end: str = "2026-01-02T00", altitude: bool = False) -> xr.Dataset:
@@ -232,7 +267,7 @@ def make_observations(end: str = "2026-01-02T00", altitude: bool = False) -> xr.
     ds_obs.attrs[TIME_TRAIT_ATTR] = Time.OBSERVATION
     ds_obs.attrs[SPACE_TRAIT_ATTR] = Space.POINT
     ds_obs.attrs[UNCERTAINTY_TRAIT_ATTR] = Uncertainty.DETERMINISTIC
-    return ds_obs
+    return add_t2m_metadata(ds_obs)
 
 
 @pytest.fixture

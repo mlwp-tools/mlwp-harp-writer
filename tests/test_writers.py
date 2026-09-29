@@ -7,13 +7,14 @@ import pyarrow as pa
 import pyarrow.dataset as pads
 import pyarrow.parquet as pq
 import pytest
+import xarray as xr
 
 from mlwp_harp_writer import write_fcparquet, write_obsparquet
 
 from .conftest import LEAD_HOURS, REFERENCE_TIMES, STATION_CODES, make_observations
 
 
-def read_hive(path, partitioning):
+def read_hive(path, partitioning, schema: pa.Schema | None = None):
     """Read a hive-partitioned parquet dataset like harpIO does.
 
     Parameters
@@ -22,17 +23,22 @@ def read_hive(path, partitioning):
         Dataset root.
     partitioning : list of str
         Partition columns; they are read as int32, as harpIO expects.
+    schema : pa.Schema, optional
+        Schema to read the data with, e.g. the obsparquet
+        ``schema/synop-schema.parquet`` (as harpIO does). By default it is
+        inferred from the first file.
 
     Returns
     -------
     pa.Table
         The dataset contents including the partition columns.
     """
-    schema = pa.schema([(p, pa.int32()) for p in partitioning])
+    partition_schema = pa.schema([(p, pa.int32()) for p in partitioning])
     dataset = pads.dataset(
         path,
         format="parquet",
-        partitioning=pads.partitioning(schema, flavor="hive"),
+        schema=schema,
+        partitioning=pads.partitioning(partition_schema, flavor="hive"),
         exclude_invalid_files=True,
         ignore_prefixes=["schema", "params"],
     )
@@ -101,8 +107,11 @@ def test_fcparquet_rejects_grid_and_levels(tmp_path, ds_grid_fcst, ds_point_fcst
     with pytest.raises(ValueError, match="space trait"):
         write_fcparquet(ds_grid_fcst, tmp_path, "m")
     ds_levels = ds_point_fcst.expand_dims(pressure=[850, 500])
-    with pytest.raises(NotImplementedError, match="unsupported dims"):
+    with pytest.raises(NotImplementedError, match="pressure levels"):
         write_fcparquet(ds_levels, tmp_path, "m")
+    ds_extra = ds_point_fcst.expand_dims(foo=[1, 2])
+    with pytest.raises(NotImplementedError, match="unsupported dims"):
+        write_fcparquet(ds_extra, tmp_path, "m")
 
 
 def test_obsparquet_layout_schema_and_params(tmp_path, ds_obs):
@@ -127,18 +136,29 @@ def test_obsparquet_layout_schema_and_params(tmp_path, ds_obs):
 
 
 def test_obsparquet_incremental_writes_merge_metadata(tmp_path):
-    """A second write adds data, schema columns and params without losing any."""
+    """A second write adds data, schema columns and params without losing any;
+    mean sea level pressure in Pa is written in HARP's hPa."""
     write_obsparquet(make_observations(end="2026-01-01T05"), tmp_path)
     ds_later = make_observations(end="2026-01-01T11", altitude=True).isel(
         valid_time=slice(6, None)
     )
-    ds_later["msl"] = ds_later["2t"] * 0 + 101300.0
-    ds_later["msl"].attrs["units"] = "Pa"
+    ds_later["msl"] = xr.full_like(ds_later["2t"], 101300.0)
+    ds_later["msl"].attrs = {
+        "standard_name": "air_pressure_at_mean_sea_level",
+        "units": "Pa",
+    }
     write_obsparquet(ds_later, tmp_path)
 
-    df = read_hive(tmp_path, ["valid_year", "valid_month", "valid_day"]).to_pandas()
-    assert len(df) == 12 * len(STATION_CODES)
     schema = pq.read_schema(tmp_path / "schema" / "synop-schema.parquet")
     assert {"T2m", "Pmsl"} <= set(schema.names)
+    df = read_hive(
+        tmp_path, ["valid_year", "valid_month", "valid_day"], schema=schema
+    ).to_pandas()
+    assert len(df) == 12 * len(STATION_CODES)
+    np.testing.assert_allclose(df["Pmsl"].dropna(), 1013.0)
+    assert df["Pmsl"].notna().sum() == 6 * len(STATION_CODES)
     params = pq.read_table(tmp_path / "params" / "params.parquet").to_pandas()
-    assert sorted(params["parameter"]) == ["Pmsl", "T2m"]
+    assert params.sort_values("parameter").to_dict("records") == [
+        {"parameter": "Pmsl", "units": "hPa"},
+        {"parameter": "T2m", "units": "K"},
+    ]
