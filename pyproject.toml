@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=69", "setuptools-scm>=8", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mlwp-harp-writer"
+dynamic = ["version"]
+description = "Write mxalign-aligned, mlwp-data-specs conforming datasets to HARP parquet datasets"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "xarray",
+  "numpy",
+  "pandas",
+  "pyarrow",
+  "loguru",
+  "mlwp-data-specs",
+  "mlwp-data-loaders",
+  "mxalign",
+]
+
+[tool.isort]
+profile = "black"
+
+[project.optional-dependencies]
+test = [
+  "pytest>=8.0.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools_scm]
+fallback_version = "0.0.0"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "harp: marks tests that need R with harpIO/harpPoint installed (Rscript on PATH)",
+]
+
+[tool.uv.sources]
+mlwp-data-specs = { git = "https://github.com/mlwp-tools/mlwp-data-specs", rev = "059f382" }
+# mxalign `refactor/alignment` (uses mlwp-data-specs traits and mlwp-data-loaders);
+# switch to main/a release once it is merged
+mxalign = { git = "https://github.com/mlwp-tools/mxalign", rev = "81482db" }
+# must match the source spec mxalign itself uses, otherwise uv reports conflicting URLs
+mlwp-data-loaders = { git = "https://github.com/mlwp-tools/mlwp-data-loaders", branch = "main" }
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.0.0",
+    "ipython>=9.11.0",
+    "pytest>=9.0.2",
+]
