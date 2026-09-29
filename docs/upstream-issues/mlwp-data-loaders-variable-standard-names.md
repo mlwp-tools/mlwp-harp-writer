@@ -49,3 +49,47 @@ mlwp-data-specs could then add a variable-level check: data variables carry
 `standard_name` and `units`, and level-dependent ones carry a vertical
 coordinate. mlwp-data-specs#1 (CF-conformance critique) currently covers
 coordinates only.
+
+## Sample data for end-to-end verification tests
+
+The loader sample datasets can't be combined into a forecast-vs-observation
+test, because none of them overlap in time:
+
+| Sample | Period |
+|---|---|
+| anemoi-inference LAM (EWC `mlwp-sample-datasets`) | 2020-02-01 to 2020-02-08 |
+| IFS GRIB (EWC `mlwp-sample-datasets`) | 2026-01 |
+| harpData `OBSTABLE_2019.sqlite` (used by the `harp.obstable` test) | 2019-02-17 to 2019-02-20, global stations |
+
+mlwp-harp-writer's end-to-end test (`tests/test_e2e_meps_obstable.py`)
+therefore pairs `OBSTABLE_2019` with **MET Norway MEPS** forecasts for
+2019-02-17 from THREDDS
+(`https://thredds.met.no/thredds/dodsC/meps25epsarchive/2019/02/17/meps_mbr0_pp_2_5km_20190217T00Z.nc`,
+read as a small OPeNDAP subset).
+
+Its test loaders (`tests/loaders/`) could move to mlwp-data-loaders:
+
+- **a MET Norway/MEPS netCDF loader** (`meps_thredds.py`), which:
+  - turns the valid `time` dim plus the scalar `forecast_reference_time` into
+    `reference_time`/`lead_time`;
+  - renames `x`/`y` to `xc`/`yc`;
+  - attaches the Lambert CRS from `projection_lambert` (`ds.mx.add_crs`);
+  - marks the `height1` dim with `standard_name="height"`;
+  - maps the CF alias `air_pressure_at_sea_level` to
+    `air_pressure_at_mean_sea_level`;
+  - squeezes out size-1 height dims on level-independent fields. MEPS is
+    otherwise already CF.
+  - Read OPeNDAP **without dask** (`chunks=None`), so subsets are fetched
+    server-side. With dask, the default chunk is the whole variable, which is
+    about 100× slower.
+- **CF metadata in the `harp.obstable` loader** (`harp_obstable_cf.py`), as
+  in the table above.
+
+A small MEPS (or other) forecast sample for 2019-02-17 to 2019-02-20 in the
+EWC `mlwp-sample-datasets` bucket would let these tests run off the same
+sample data as the loaders.
+
+Also relevant to mlwp-data-specs#1: MEPS spells the latitude/longitude units
+`degree_north`/`degree_east`. That is valid CF, but mlwp-data-specs only
+accepts `degrees_north`/`degrees_east`, so the MEPS loader has to rewrite
+them.

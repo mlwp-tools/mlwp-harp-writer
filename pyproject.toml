@@ -25,6 +25,7 @@ profile = "black"
 [project.optional-dependencies]
 test = [
   "pytest>=8.0.0",
+  "pooch",
 ]
 
 [tool.setuptools]
@@ -40,6 +41,7 @@ fallback_version = "0.0.0"
 testpaths = ["tests"]
 markers = [
     "harp: marks tests that need R with harpIO/harpPoint installed (Rscript on PATH)",
+    "network: marks tests that download sample data (skip with -m 'not network')",
 ]
 
 [tool.uv.sources]

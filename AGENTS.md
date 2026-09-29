@@ -91,6 +91,18 @@ Guidance for agents and contributors working in this repository.
 - CF `standard_name`/height -> HARP parameter table, height detection and
   unit conversion: `src/mlwp_harp_writer/params.py` (`harp_variables`)
 - Synthetic test data: `tests/conftest.py`
+- Test loaders following the mlwp-data-loaders loader contract (passed to
+  `load_and_validate_dataset` by file path): `tests/loaders/`.
+  - `meps_thredds.py` loads MEPS from MET Norway's THREDDS archive.
+  - `harp_obstable_cf.py` wraps the obstable loader.
+  - Both set the CF variable metadata the writer needs. Keep metadata fixes
+    in loaders like these; never detect or guess them in the package.
+- Real-data end-to-end test: `tests/test_e2e_meps_obstable.py` (marker
+  `network`).
+  - It uses MEPS (2019-02-17) with harpData's OBSTABLE_2019, because the
+    mlwp-data-loaders sample forecasts don't overlap any sample obs in time.
+  - Read MEPS over OPeNDAP **without dask** (`chunks=None`). With dask, the
+    default chunk is the whole variable, which is ~100× slower.
 - Known upstream bugs (cause, reproduction, proposed fix, which tests are
   `xfail`ed): `docs/upstream-issues/`. Add a file there whenever a test is
   marked `xfail` because of a dependency, and delete it once the fix is
