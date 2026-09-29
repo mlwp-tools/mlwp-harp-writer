@@ -8,6 +8,14 @@ This lets you verify forecasts with harp's point verification tools
 (`harpPoint`). Typical inputs are ML weather models loaded with
 [mlwp-data-loaders](https://github.com/mlwp-tools/mlwp-data-loaders).
 
+> [!WARNING]
+> Until mxalign `v0.2.0` is released, this package depends on **unmerged
+> upstream code**. mxalign is pinned to a commit on its
+> [`refactor/alignment`](https://github.com/mlwp-tools/mxalign/tree/refactor/alignment)
+> branch, which switches mxalign to mlwp-data-specs traits and
+> mlwp-data-loaders. That branch, and so this package's API and behaviour,
+> may still change.
+
 ## How it fits together
 
 ```
