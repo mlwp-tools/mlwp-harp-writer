@@ -80,14 +80,13 @@ def test_harp_reads_and_verifies(tmp_path, ds_grid_fcst, ds_grid_ens, ds_obs, en
         suppressMessages({{library(harpIO); library(harpPoint)}})
         fc <- read_point_forecast(
           dttm = seq_dttm(2026010100, 2026010112, "12h"),
-          fcst_model = "model", fcst_type = "{'eps' if ensemble else 'det'}",
-          parameter = "T2m", lead_time = seq(0, 12, 6),
+          fcst_model = "model", parameter = "T2m", lead_time = seq(0, 12, 6),
           file_path = "{tmp_path / FCPARQUET_DIR}",
           file_format = "fcparquet", file_template = "{{fcst_model}}/{{parameter}}"
         )
         obs <- read_point_obs(
           dttm = unique_valid_dttm(fc), parameter = "T2m",
-          obs_path = "{tmp_path / OBSPARQUET_DIR}", file_format = "obsparquet"
+          file_path = "{tmp_path / OBSPARQUET_DIR}", file_format = "obsparquet"
         )
         fc <- join_to_fcst(fc, obs)
         stopifnot(nrow(fc[[1]]) == 24)

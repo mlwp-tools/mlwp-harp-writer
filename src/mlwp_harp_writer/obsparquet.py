@@ -3,7 +3,7 @@
 The layout matches what ``harpIO::read_obs(output_format_opts =
 obsparquet_opts(...))`` writes, so the data can be read with::
 
-    read_point_obs(dttm, parameter, obs_path = path, file_format = "obsparquet")
+    read_point_obs(dttm, parameter, file_path = path, file_format = "obsparquet")
 
 Directory layout::
 
@@ -58,7 +58,7 @@ def write_obsparquet(
         coordinate, and converted to HARP units, see
         :func:`~mlwp_harp_writer.params.harp_variables`.
     path : str or PathLike
-        Root of the obsparquet dataset (the ``obs_path`` passed to
+        Root of the obsparquet dataset (the ``file_path`` passed to
         ``read_point_obs``).
     params : dict, optional
         Explicit variable name to HARP parameter mappings, see

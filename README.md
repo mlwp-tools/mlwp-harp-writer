@@ -211,7 +211,9 @@ write_harp_parquets(aligned, ds_obs, "harp_data/")
 
 ### 5. Verify in R with harp
 
-This needs a harpIO version with parquet support (current `master`):
+This needs a harpIO version with parquet support (current `master`). See
+[DEVELOPING.md](DEVELOPING.md#trying-the-output-in-harp-docker) for a Docker
+image with harp:
 
 ```r
 library(harpIO)
@@ -220,7 +222,6 @@ library(harpPoint)
 fc <- read_point_forecast(
   dttm          = seq_dttm(2026010100, 2026010112, "12h"),
   fcst_model    = "my-ai-model",
-  fcst_type     = "det",
   parameter     = "T2m",
   file_path     = "harp_data/FCPARQUET",
   file_format   = "fcparquet",
@@ -229,7 +230,7 @@ fc <- read_point_forecast(
 obs <- read_point_obs(
   dttm        = unique_valid_dttm(fc),
   parameter   = "T2m",
-  obs_path    = "harp_data/OBSPARQUET",
+  file_path   = "harp_data/OBSPARQUET",
   file_format = "obsparquet"
 )
 verif <- det_verify(join_to_fcst(fc, obs), T2m)
